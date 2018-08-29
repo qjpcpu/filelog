@@ -14,6 +14,7 @@ type ManyToOne struct {
 	writeIndex uint64
 	readIndex  uint64
 	alerter    Alerter
+
 	holesCount int64
 }
 
@@ -39,10 +40,14 @@ func NewManyToOne(size int, alerter Alerter) *ManyToOne {
 	return d
 }
 
+func (d *ManyToOne) mod(num uint64) uint64 {
+	return num & (uint64(len(d.buffer)) - 1)
+}
+
 // Set sets the data in the next slot of the ring buffer.
 func (d *ManyToOne) Set(data GenericDataType) {
 	for {
-		count := d.holesCount
+		count := atomic.LoadInt64(&d.holesCount)
 		if count < int64(len(d.buffer)) && atomic.CompareAndSwapInt64(&d.holesCount, count, count+1) {
 			break
 		}
@@ -50,7 +55,7 @@ func (d *ManyToOne) Set(data GenericDataType) {
 	}
 	for {
 		writeIndex := atomic.AddUint64(&d.writeIndex, 1)
-		idx := writeIndex % uint64(len(d.buffer))
+		idx := d.mod(writeIndex)
 		old := atomic.LoadPointer(&d.buffer[idx])
 
 		if old != nil &&
@@ -78,7 +83,7 @@ func (d *ManyToOne) Set(data GenericDataType) {
 // If there is not data available, it will return (nil, false).
 func (d *ManyToOne) TryNext() (data GenericDataType, ok bool) {
 	// Read a value from the ring buffer based on the readIndex.
-	idx := d.readIndex % uint64(len(d.buffer))
+	idx := d.mod(d.readIndex)
 	result := (*bucket)(atomic.SwapPointer(&d.buffer[idx], nil))
 
 	// When the result is nil that means the writer has not had the

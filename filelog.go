@@ -5,7 +5,6 @@ import (
 	"github.com/qjpcpu/filelog/diode"
 	"io"
 	"log"
-	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -45,6 +44,22 @@ func logFilename(filename string, rt RotateType) string {
 	}
 }
 
+func is2n(num uint64) bool {
+	if num == 0 {
+		return false
+	}
+	var bit uint64 = 1
+	var i uint64 = 0
+	for ; i < 64; i++ {
+		if m := bit << i; (^m)&num == 0 {
+			return true
+		} else if m > num {
+			return false
+		}
+	}
+	return false
+}
+
 func NewWriter(filename string, rt RotateType, createShortcut bool, params ...int) (io.WriteCloser, error) {
 	f, err := filepath.Abs(filename)
 	if err != nil {
@@ -54,18 +69,17 @@ func NewWriter(filename string, rt RotateType, createShortcut bool, params ...in
 	w := &FileLogWriter{
 		filename:       filename,
 		rt:             rt,
-		realFilename:   "",
 		createShortcut: createShortcut,
 	}
 	bufSize := 1024
 	if len(params) > 0 && params[0] > 0 {
 		bufSize = params[0]
 	}
-	n := math.Log2(float64(bufSize))
-	if n == math.Ceil(n) && n == math.Floor(n) {
-		// valid
-	} else {
+	if !is2n(uint64(bufSize)) {
 		return nil, fmt.Errorf("buffer size %d != 2^n", bufSize)
+	}
+	if err = w.openFile(); err != nil {
+		return nil, err
 	}
 	wr := diode.NewWriter(w, bufSize, 10*time.Millisecond, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)

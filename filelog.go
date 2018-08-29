@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/qjpcpu/filelog/diode"
 	"io"
+	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -43,7 +45,7 @@ func logFilename(filename string, rt RotateType) string {
 	}
 }
 
-func NewWriter(filename string, rt RotateType, createShortcut bool) (io.WriteCloser, error) {
+func NewWriter(filename string, rt RotateType, createShortcut bool, params ...int) (io.WriteCloser, error) {
 	f, err := filepath.Abs(filename)
 	if err != nil {
 		return nil, err
@@ -55,7 +57,19 @@ func NewWriter(filename string, rt RotateType, createShortcut bool) (io.WriteClo
 		realFilename:   "",
 		createShortcut: createShortcut,
 	}
-	wr := diode.NewWriter(w, 1000, 10*time.Millisecond, func(int) {})
+	bufSize := 1024
+	if len(params) > 0 && params[0] > 0 {
+		bufSize = params[0]
+	}
+	n := math.Log2(float64(bufSize))
+	if n == math.Ceil(n) && n == math.Floor(n) {
+		// valid
+	} else {
+		return nil, fmt.Errorf("buffer size %d != 2^n", bufSize)
+	}
+	wr := diode.NewWriter(w, bufSize, 10*time.Millisecond, func(dropped int) {
+		log.Printf("[filelog] %d logs dropped\n", dropped)
+	})
 	return wr, nil
 }
 

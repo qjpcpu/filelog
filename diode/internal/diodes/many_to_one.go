@@ -2,6 +2,7 @@ package diodes
 
 import (
 	"log"
+	"runtime"
 	"sync/atomic"
 	"unsafe"
 )
@@ -13,6 +14,7 @@ type ManyToOne struct {
 	writeIndex uint64
 	readIndex  uint64
 	alerter    Alerter
+	holesCount int64
 }
 
 // NewManyToOne creates a new diode (ring buffer). The ManyToOne diode
@@ -39,6 +41,13 @@ func NewManyToOne(size int, alerter Alerter) *ManyToOne {
 
 // Set sets the data in the next slot of the ring buffer.
 func (d *ManyToOne) Set(data GenericDataType) {
+	for {
+		count := d.holesCount
+		if count < int64(len(d.buffer)) && atomic.CompareAndSwapInt64(&d.holesCount, count, count+1) {
+			break
+		}
+		runtime.Gosched()
+	}
 	for {
 		writeIndex := atomic.AddUint64(&d.writeIndex, 1)
 		idx := writeIndex % uint64(len(d.buffer))
@@ -126,5 +135,6 @@ func (d *ManyToOne) TryNext() (data GenericDataType, ok bool) {
 	// (where seq was greater than readIndex).
 	//
 	d.readIndex++
+	atomic.AddInt64(&d.holesCount, -1)
 	return result.data, true
 }

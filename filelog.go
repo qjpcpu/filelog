@@ -78,9 +78,6 @@ func NewWriter(filename string, rt RotateType, createShortcut bool, params ...in
 	if !is2n(uint64(bufSize)) {
 		return nil, fmt.Errorf("buffer size %d != 2^n", bufSize)
 	}
-	if err = w.openFile(); err != nil {
-		return nil, err
-	}
 	wr := diode.NewWriter(w, bufSize, 10*time.Millisecond, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)
 	})

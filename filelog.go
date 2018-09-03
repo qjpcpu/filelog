@@ -75,9 +75,10 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, erro
 		return nil, err
 	}
 	opt := &Option{
-		RotateType:    RotateDaily,
-		FlushInterval: 10 * time.Millisecond,
-		BufferSize:    1024,
+		RotateType:     RotateDaily,
+		FlushInterval:  10 * time.Millisecond,
+		BufferSize:     1024,
+		CreateShortcut: false,
 	}
 	for _, fn := range wrappers {
 		fn(opt)

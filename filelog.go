@@ -35,6 +35,16 @@ type Option struct {
 
 type OptionWrapper func(*Option)
 
+func (opt *Option) validate() error {
+	if !is2n(opt.BufferSize) {
+		return fmt.Errorf("buffer size %d != 2^n", opt.BufferSize)
+	}
+	if opt.FlushInterval <= 0 {
+		return fmt.Errorf("flush interval not set")
+	}
+	return nil
+}
+
 func logFilename(filename string, rt RotateType) string {
 	now := time.Now()
 	switch rt {
@@ -83,14 +93,13 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, erro
 	for _, fn := range wrappers {
 		fn(opt)
 	}
-	filename = f
+	if err = opt.validate(); err != nil {
+		return nil, err
+	}
 	w := &FileLogWriter{
-		filename:       filename,
+		filename:       f,
 		rt:             opt.RotateType,
 		createShortcut: opt.CreateShortcut,
-	}
-	if !is2n(opt.BufferSize) {
-		return nil, fmt.Errorf("buffer size %d != 2^n", opt.BufferSize)
 	}
 	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)

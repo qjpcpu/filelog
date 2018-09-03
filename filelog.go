@@ -26,6 +26,15 @@ const (
 	RotateWeekly
 )
 
+type Option struct {
+	RotateType     RotateType
+	CreateShortcut bool
+	BufferSize     uint64
+	FlushInterval  time.Duration
+}
+
+type OptionWrapper func(*Option)
+
 func logFilename(filename string, rt RotateType) string {
 	now := time.Now()
 	switch rt {
@@ -60,25 +69,29 @@ func is2n(num uint64) bool {
 	return false
 }
 
-func NewWriter(filename string, rt RotateType, createShortcut bool, params ...int) (io.WriteCloser, error) {
+func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, error) {
 	f, err := filepath.Abs(filename)
 	if err != nil {
 		return nil, err
 	}
+	opt := &Option{
+		RotateType:    RotateDaily,
+		FlushInterval: 10 * time.Millisecond,
+		BufferSize:    1024,
+	}
+	for _, fn := range wrappers {
+		fn(opt)
+	}
 	filename = f
 	w := &FileLogWriter{
 		filename:       filename,
-		rt:             rt,
-		createShortcut: createShortcut,
+		rt:             opt.RotateType,
+		createShortcut: opt.CreateShortcut,
 	}
-	bufSize := 1024
-	if len(params) > 0 && params[0] > 0 {
-		bufSize = params[0]
+	if !is2n(opt.BufferSize) {
+		return nil, fmt.Errorf("buffer size %d != 2^n", opt.BufferSize)
 	}
-	if !is2n(uint64(bufSize)) {
-		return nil, fmt.Errorf("buffer size %d != 2^n", bufSize)
-	}
-	wr := diode.NewWriter(w, bufSize, 10*time.Millisecond, func(dropped int) {
+	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)
 	})
 	return wr, nil

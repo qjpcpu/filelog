@@ -24,6 +24,7 @@ const (
 	RotateDaily RotateType = iota
 	RotateHourly
 	RotateWeekly
+	RotateNone
 )
 
 type Option struct {
@@ -57,6 +58,8 @@ func logFilename(filename string, rt RotateType) string {
 			offset = 6
 		}
 		return fmt.Sprintf("%s.%s", filename, now.AddDate(0, 0, -offset).Format("2006-01-02"))
+	case RotateNone:
+		return filename
 	default:
 		// default rotate daily
 		return fmt.Sprintf("%s.%s", filename, now.Format("2006-01-02"))
@@ -85,7 +88,7 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, erro
 		return nil, err
 	}
 	opt := &Option{
-		RotateType:     RotateDaily,
+		RotateType:     RotateNone,
 		FlushInterval:  10 * time.Millisecond,
 		BufferSize:     1024,
 		CreateShortcut: false,
@@ -115,7 +118,7 @@ func (w *FileLogWriter) openFile() error {
 		return err
 	}
 	w.file = fd
-	if w.createShortcut {
+	if w.createShortcut && w.rt != RotateNone {
 		linkto, _ := os.Readlink(w.filename)
 		if linkto == "" || filepath.Base(linkto) != filepath.Base(w.realFilename) {
 			os.Remove(w.filename)

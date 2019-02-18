@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// FileLogWriter log writer
 type FileLogWriter struct {
 	filename       string
 	file           *os.File
@@ -18,15 +19,21 @@ type FileLogWriter struct {
 	createShortcut bool
 }
 
+// RotateType 轮转类型
 type RotateType int
 
 const (
+	// RotateDaily 按天轮转
 	RotateDaily RotateType = iota
+	// RotateHourly 按小时轮转
 	RotateHourly
+	// RotateWeekly 按周轮转
 	RotateWeekly
+	// RotateNone 不切割日志
 	RotateNone
 )
 
+// Option 参数选项
 type Option struct {
 	RotateType     RotateType
 	CreateShortcut bool
@@ -34,7 +41,45 @@ type Option struct {
 	FlushInterval  time.Duration
 }
 
+// OptionWrapper 参数配置函数
 type OptionWrapper func(*Option)
+
+// NewWriter 创建文件日志,默认选项日志不会自动轮转
+func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, error) {
+	f, err := filepath.Abs(filename)
+	if err != nil {
+		return nil, err
+	}
+	opt := &Option{
+		RotateType:     RotateNone,
+		FlushInterval:  10 * time.Millisecond,
+		BufferSize:     1024,
+		CreateShortcut: false,
+	}
+	for _, fn := range wrappers {
+		fn(opt)
+	}
+	if err = opt.validate(); err != nil {
+		return nil, err
+	}
+	w := &FileLogWriter{
+		filename:       f,
+		rt:             opt.RotateType,
+		createShortcut: opt.CreateShortcut,
+	}
+	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
+		log.Printf("[filelog] %d logs dropped\n", dropped)
+	})
+	return wr, nil
+}
+
+// Close 关闭文件
+func (w *FileLogWriter) Close() error {
+	if w.file != nil {
+		return w.file.Close()
+	}
+	return nil
+}
 
 func (opt *Option) validate() error {
 	if !is2n(opt.BufferSize) {
@@ -82,34 +127,6 @@ func is2n(num uint64) bool {
 	return false
 }
 
-func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, error) {
-	f, err := filepath.Abs(filename)
-	if err != nil {
-		return nil, err
-	}
-	opt := &Option{
-		RotateType:     RotateNone,
-		FlushInterval:  10 * time.Millisecond,
-		BufferSize:     1024,
-		CreateShortcut: false,
-	}
-	for _, fn := range wrappers {
-		fn(opt)
-	}
-	if err = opt.validate(); err != nil {
-		return nil, err
-	}
-	w := &FileLogWriter{
-		filename:       f,
-		rt:             opt.RotateType,
-		createShortcut: opt.CreateShortcut,
-	}
-	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
-		log.Printf("[filelog] %d logs dropped\n", dropped)
-	})
-	return wr, nil
-}
-
 func (w *FileLogWriter) openFile() error {
 	// Open the log file
 	w.realFilename = logFilename(w.filename, w.rt)
@@ -154,11 +171,4 @@ func (w *FileLogWriter) Write(p []byte) (int, error) {
 		fmt.Fprintf(os.Stderr, "FileLogWriter(%q): %s\n", w.filename, err)
 	}
 	return n, err
-}
-
-func (w *FileLogWriter) Close() error {
-	if w.file != nil {
-		return w.file.Close()
-	}
-	return nil
 }

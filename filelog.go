@@ -2,11 +2,14 @@ package filelog
 
 import (
 	"fmt"
+	"github.com/dersebi/golang_exp/exp/inotify"
 	"github.com/qjpcpu/filelog/diode"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -17,6 +20,7 @@ type FileLogWriter struct {
 	rt             RotateType
 	realFilename   string
 	createShortcut bool
+	reOpen         int32
 }
 
 // RotateType 轮转类型
@@ -127,6 +131,31 @@ func is2n(num uint64) bool {
 	return false
 }
 
+func (w *FileLogWriter) needWatcher() bool {
+	return w.rt == RotateNone
+}
+
+func (w *FileLogWriter) watchFile(filename string) {
+	for doOnce := true; doOnce; doOnce = false {
+		atomic.CompareAndSwapInt32(&w.reOpen, 1, 0)
+		wa, err := inotify.NewWatcher()
+		if err != nil {
+			break
+		}
+		if err = wa.AddWatch(filename, syscall.IN_DELETE|syscall.IN_DELETE_SELF|syscall.IN_MOVE|syscall.IN_MOVE_SELF|syscall.IN_IGNORED); err != nil {
+			break
+		}
+		go func(iw *inotify.Watcher) {
+			select {
+			case <-iw.Event:
+			case <-iw.Error:
+			}
+			atomic.CompareAndSwapInt32(&w.reOpen, 0, 1)
+			iw.Close()
+		}(wa)
+	}
+}
+
 func (w *FileLogWriter) openFile() error {
 	// Open the log file
 	w.realFilename = logFilename(w.filename, w.rt)
@@ -142,6 +171,9 @@ func (w *FileLogWriter) openFile() error {
 			os.Symlink(filepath.Base(w.realFilename), w.filename)
 		}
 	}
+	if w.needWatcher() {
+		w.watchFile(w.realFilename)
+	}
 	return nil
 }
 
@@ -156,7 +188,7 @@ func (w *FileLogWriter) doRotate() error {
 }
 
 func (w *FileLogWriter) needRotate() bool {
-	return w.realFilename != logFilename(w.filename, w.rt)
+	return w.realFilename != logFilename(w.filename, w.rt) || w.reOpen == 1
 }
 
 func (w *FileLogWriter) Write(p []byte) (int, error) {

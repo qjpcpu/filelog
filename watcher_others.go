@@ -1,5 +1,7 @@
 // +build darwin windows
+
 // just for compile pass
+
 package filelog
 
 import (

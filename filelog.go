@@ -18,6 +18,7 @@ type FileLogWriter struct {
 	realFilename   string
 	createShortcut bool
 	reOpen         int32
+	nonLinuxWatch  int32
 }
 
 // RotateType 轮转类型

@@ -68,6 +68,7 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, erro
 		filename:       f,
 		rt:             opt.RotateType,
 		createShortcut: opt.CreateShortcut,
+		reOpen:         1,
 	}
 	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)

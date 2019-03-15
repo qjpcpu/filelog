@@ -11,7 +11,9 @@ import (
 
 func (w *FileLogWriter) watchFile(filename string) {
 	for doOnce := true; doOnce; doOnce = false {
-		atomic.CompareAndSwapInt32(&w.reOpen, 1, 0)
+		if !atomic.CompareAndSwapInt32(&w.reOpen, 1, 0) {
+			break
+		}
 		wa, err := inotify.NewWatcher()
 		if err != nil {
 			break
@@ -37,7 +39,7 @@ func (w *FileLogWriter) watchFile(filename string) {
 					break LOOP
 				}
 			}
-			atomic.CompareAndSwapInt32(&w.reOpen, 0, 1)
+			atomic.StoreInt32(&w.reOpen, 1)
 			iw.Close()
 		}(wa)
 	}

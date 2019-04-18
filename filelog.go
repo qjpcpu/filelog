@@ -115,19 +115,7 @@ func logFilename(filename string, rt RotateType) string {
 }
 
 func is2n(num uint64) bool {
-	if num == 0 {
-		return false
-	}
-	var bit uint64 = 1
-	var i uint64 = 0
-	for ; i < 64; i++ {
-		if m := bit << i; (^m)&num == 0 {
-			return true
-		} else if m > num {
-			return false
-		}
-	}
-	return false
+	return num > 0 && num&(num-1) == 0
 }
 
 func (w *FileLogWriter) needWatcher() bool {

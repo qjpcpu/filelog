@@ -3,22 +3,35 @@ package filelog
 import (
 	"fmt"
 	"github.com/qjpcpu/filelog/diode"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
 // FileLogWriter log writer
 type FileLogWriter struct {
+	*diode.Writer
+	fwriter *fWriter
+}
+
+// Truncate file
+func (fw *FileLogWriter) Truncate() {
+	fw.fwriter.Truncate()
+}
+
+// fWriter log writer
+type fWriter struct {
 	filename       string
 	file           *os.File
 	rt             RotateType
 	realFilename   string
 	createShortcut bool
-	reOpen         int32
-	nonLinuxWatch  int32
+	// flags
+	reOpen        int32
+	nonLinuxWatch int32
+	truncateFlag  int32
 }
 
 // RotateType 轮转类型
@@ -47,7 +60,7 @@ type Option struct {
 type OptionWrapper func(*Option)
 
 // NewWriter 创建文件日志,默认选项日志不会自动轮转
-func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, error) {
+func NewWriter(filename string, wrappers ...OptionWrapper) (*FileLogWriter, error) {
 	f, err := filepath.Abs(filename)
 	if err != nil {
 		return nil, err
@@ -64,7 +77,7 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, erro
 	if err = opt.validate(); err != nil {
 		return nil, err
 	}
-	w := &FileLogWriter{
+	w := &fWriter{
 		filename:       f,
 		rt:             opt.RotateType,
 		createShortcut: opt.CreateShortcut,
@@ -73,11 +86,15 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (io.WriteCloser, erro
 	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)
 	})
-	return wr, nil
+	fw := &FileLogWriter{
+		Writer:  &wr,
+		fwriter: w,
+	}
+	return fw, nil
 }
 
 // Close 关闭文件
-func (w *FileLogWriter) Close() error {
+func (w *fWriter) Close() error {
 	if w.file != nil {
 		return w.file.Close()
 	}
@@ -118,11 +135,11 @@ func is2n(num uint64) bool {
 	return num > 0 && num&(num-1) == 0
 }
 
-func (w *FileLogWriter) needWatcher() bool {
+func (w *fWriter) needWatcher() bool {
 	return w.rt == RotateNone
 }
 
-func (w *FileLogWriter) openFile() error {
+func (w *fWriter) openFile() error {
 	// Open the log file
 	w.realFilename = logFilename(w.filename, w.rt)
 	fd, err := os.OpenFile(w.realFilename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
@@ -143,7 +160,7 @@ func (w *FileLogWriter) openFile() error {
 	return nil
 }
 
-func (w *FileLogWriter) doRotate() error {
+func (w *fWriter) doRotate() error {
 	// Close any log file that may be open
 	fd := w.file
 	if fd != nil {
@@ -153,20 +170,28 @@ func (w *FileLogWriter) doRotate() error {
 	return w.openFile()
 }
 
-func (w *FileLogWriter) needRotate() bool {
+func (w *fWriter) needRotate() bool {
 	return w.realFilename != logFilename(w.filename, w.rt) || w.reOpen == 1
 }
 
-func (w *FileLogWriter) Write(p []byte) (int, error) {
+func (w *fWriter) Truncate() {
+	atomic.CompareAndSwapInt32(&w.truncateFlag, 0, 1)
+}
+
+func (w *fWriter) Write(p []byte) (int, error) {
 	if w.needRotate() {
 		if err := w.doRotate(); err != nil {
-			fmt.Fprintf(os.Stderr, "FileLogWriter(%q): %s\n", w.filename, err)
+			fmt.Fprintf(os.Stderr, "fWriter(%q): %s\n", w.filename, err)
 		}
+	}
+	if w.truncateFlag == 1 && atomic.CompareAndSwapInt32(&w.truncateFlag, 1, 0) {
+		w.file.Truncate(0)
+		w.file.Seek(0, 0)
 	}
 	// Perform the write
 	n, err := w.file.Write(p)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FileLogWriter(%q): %s\n", w.filename, err)
+		fmt.Fprintf(os.Stderr, "fWriter(%q): %s\n", w.filename, err)
 	}
 	return n, err
 }

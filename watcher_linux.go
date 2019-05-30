@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-func (w *FileLogWriter) watchFile(filename string) {
+func (w *fWriter) watchFile(filename string) {
 	for doOnce := true; doOnce; doOnce = false {
 		if !atomic.CompareAndSwapInt32(&w.reOpen, 1, 0) {
 			break

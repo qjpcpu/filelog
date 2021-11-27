@@ -2,12 +2,13 @@ package filelog
 
 import (
 	"fmt"
-	"github.com/qjpcpu/filelog/diode"
 	"log"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
+
+	"github.com/qjpcpu/filelog/diode"
 )
 
 // FileLogWriter log writer
@@ -58,6 +59,18 @@ type Option struct {
 
 // OptionWrapper 参数配置函数
 type OptionWrapper func(*Option)
+
+func RotateBy(t RotateType) OptionWrapper {
+	return func(o *Option) {
+		o.RotateType = t
+	}
+}
+
+func CreateShortcut(yes bool) OptionWrapper {
+	return func(o *Option) {
+		o.CreateShortcut = yes
+	}
+}
 
 // NewWriter 创建文件日志,默认选项日志不会自动轮转
 func NewWriter(filename string, wrappers ...OptionWrapper) (*FileLogWriter, error) {

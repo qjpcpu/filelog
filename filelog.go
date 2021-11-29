@@ -41,6 +41,8 @@ type RotateType int
 const (
 	// RotateDaily 按天轮转
 	RotateDaily RotateType = iota
+	// RotateMinute 按分钟轮转
+	RotateMinute
 	// RotateHourly 按小时轮转
 	RotateHourly
 	// RotateWeekly 按周轮转
@@ -129,6 +131,8 @@ func logFilename(filename string, rt RotateType) string {
 	switch rt {
 	case RotateHourly:
 		return fmt.Sprintf("%s.%s.%02d", filename, now.Format("2006-01-02"), now.Hour())
+	case RotateMinute:
+		return fmt.Sprintf("%s.%s.%02d.%02d", filename, now.Format("2006-01-02"), now.Hour(), now.Minute())
 	case RotateWeekly:
 		offset := int(now.Weekday()) - 1
 		if offset < 0 {

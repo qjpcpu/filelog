@@ -29,7 +29,6 @@ type fWriter struct {
 	rt             RotateType
 	realFilename   string
 	createShortcut bool
-	rch            chan string
 	// flags
 	reOpen        int32
 	nonLinuxWatch int32
@@ -98,7 +97,6 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (*FileLogWriter, erro
 		rt:             opt.RotateType,
 		createShortcut: opt.CreateShortcut,
 		reOpen:         1,
-		rch:            make(chan string, 1),
 	}
 	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)
@@ -116,10 +114,6 @@ func (w *fWriter) Close() error {
 		return w.file.Close()
 	}
 	return nil
-}
-
-func (w *FileLogWriter) Rotated() <-chan string {
-	return w.fwriter.rch
 }
 
 func (opt *Option) validate() error {
@@ -205,10 +199,6 @@ func (w *fWriter) Write(p []byte) (int, error) {
 	if w.needRotate() {
 		if err := w.doRotate(); err != nil {
 			fmt.Fprintf(os.Stderr, "fWriter(%q): %s\n", w.filename, err)
-		}
-		select {
-		case w.rch <- w.realFilename:
-		default:
 		}
 	}
 	if w.truncateFlag == 1 && atomic.CompareAndSwapInt32(&w.truncateFlag, 1, 0) {

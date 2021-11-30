@@ -12,13 +12,20 @@ import (
 )
 
 // FileLogWriter log writer
-type FileLogWriter struct {
+type FileLogWriter interface {
+	Write(p []byte) (int, error)
+	Filename() string
+	Truncate()
+	Close() error
+}
+
+type fileLogWriter struct {
 	*diode.Writer
 	fwriter *fWriter
 }
 
 // Truncate file
-func (fw *FileLogWriter) Truncate() {
+func (fw *fileLogWriter) Truncate() {
 	fw.fwriter.Truncate()
 }
 
@@ -33,6 +40,7 @@ type fWriter struct {
 	reOpen        int32
 	nonLinuxWatch int32
 	truncateFlag  int32
+	keepCount     int
 }
 
 // RotateType 轮转类型
@@ -57,6 +65,7 @@ type Option struct {
 	CreateShortcut bool
 	BufferSize     uint64
 	FlushInterval  time.Duration
+	KeepCount      int
 }
 
 // OptionWrapper 参数配置函数
@@ -74,8 +83,14 @@ func CreateShortcut(yes bool) OptionWrapper {
 	}
 }
 
+func Keep(count int) OptionWrapper {
+	return func(o *Option) {
+		o.KeepCount = count
+	}
+}
+
 // NewWriter 创建文件日志,默认选项日志不会自动轮转
-func NewWriter(filename string, wrappers ...OptionWrapper) (*FileLogWriter, error) {
+func NewWriter(filename string, wrappers ...OptionWrapper) (FileLogWriter, error) {
 	f, err := filepath.Abs(filename)
 	if err != nil {
 		return nil, err
@@ -97,11 +112,12 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (*FileLogWriter, erro
 		rt:             opt.RotateType,
 		createShortcut: opt.CreateShortcut,
 		reOpen:         1,
+		keepCount:      opt.KeepCount,
 	}
 	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)
 	})
-	fw := &FileLogWriter{
+	fw := &fileLogWriter{
 		Writer:  &wr,
 		fwriter: w,
 	}
@@ -126,8 +142,7 @@ func (opt *Option) validate() error {
 	return nil
 }
 
-func logFilename(filename string, rt RotateType) string {
-	now := time.Now()
+func logFilename(filename string, rt RotateType, now time.Time) string {
 	switch rt {
 	case RotateHourly:
 		return fmt.Sprintf("%s.%s.%02d", filename, now.Format("2006-01-02"), now.Hour())
@@ -156,9 +171,11 @@ func (w *fWriter) needWatcher() bool {
 	return w.rt == RotateNone
 }
 
+func (w *fileLogWriter) Filename() string { return w.fwriter.realFilename }
+
 func (w *fWriter) openFile() error {
 	// Open the log file
-	w.realFilename = logFilename(w.filename, w.rt)
+	w.realFilename = logFilename(w.filename, w.rt, time.Now())
 	fd, err := os.OpenFile(w.realFilename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 	if err != nil {
 		return err
@@ -177,6 +194,22 @@ func (w *fWriter) openFile() error {
 	return nil
 }
 
+func (w *fWriter) removeOldFile() {
+	if w.keepCount <= 0 || w.rt == RotateNone {
+		return
+	}
+	switch w.rt {
+	case RotateDaily:
+		os.Remove(logFilename(w.filename, w.rt, time.Now().AddDate(0, 0, -1*w.keepCount)))
+	case RotateHourly:
+		os.Remove(logFilename(w.filename, w.rt, time.Now().Add(-time.Hour*time.Duration(w.keepCount))))
+	case RotateMinute:
+		os.Remove(logFilename(w.filename, w.rt, time.Now().Add(-time.Minute*time.Duration(w.keepCount))))
+	case RotateWeekly:
+		os.Remove(logFilename(w.filename, w.rt, time.Now().AddDate(0, 0, -7*w.keepCount)))
+	}
+}
+
 func (w *fWriter) doRotate() error {
 	// Close any log file that may be open
 	fd := w.file
@@ -188,7 +221,7 @@ func (w *fWriter) doRotate() error {
 }
 
 func (w *fWriter) needRotate() bool {
-	return w.realFilename != logFilename(w.filename, w.rt) || w.reOpen == 1
+	return w.realFilename != logFilename(w.filename, w.rt, time.Now()) || w.reOpen == 1
 }
 
 func (w *fWriter) Truncate() {
@@ -200,6 +233,7 @@ func (w *fWriter) Write(p []byte) (int, error) {
 		if err := w.doRotate(); err != nil {
 			fmt.Fprintf(os.Stderr, "fWriter(%q): %s\n", w.filename, err)
 		}
+		w.removeOldFile()
 	}
 	if w.truncateFlag == 1 && atomic.CompareAndSwapInt32(&w.truncateFlag, 1, 0) {
 		w.file.Truncate(0)

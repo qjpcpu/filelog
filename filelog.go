@@ -29,6 +29,11 @@ func (fw *fileLogWriter) Truncate() {
 	fw.fwriter.Truncate()
 }
 
+func (fw *fileLogWriter) Close() error {
+	fw.Writer.Close()
+	return fw.fwriter.Close()
+}
+
 // fWriter log writer
 type fWriter struct {
 	filename       string

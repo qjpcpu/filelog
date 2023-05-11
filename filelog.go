@@ -48,23 +48,16 @@ type fWriter struct {
 	keepCount     int
 }
 
-// RotateType 轮转类型
 type RotateType int
 
 const (
-	// RotateDaily 按天轮转
 	RotateDaily RotateType = iota
-	// RotateMinute 按分钟轮转
 	RotateMinute
-	// RotateHourly 按小时轮转
 	RotateHourly
-	// RotateWeekly 按周轮转
 	RotateWeekly
-	// RotateNone 不切割日志
 	RotateNone
 )
 
-// Option 参数选项
 type Option struct {
 	RotateType     RotateType
 	CreateShortcut bool
@@ -73,7 +66,6 @@ type Option struct {
 	KeepCount      int
 }
 
-// OptionWrapper 参数配置函数
 type OptionWrapper func(*Option)
 
 func RotateBy(t RotateType) OptionWrapper {
@@ -94,7 +86,7 @@ func Keep(count int) OptionWrapper {
 	}
 }
 
-// NewWriter 创建文件日志,默认选项日志不会自动轮转
+// NewWriter create file logger, rotate none & by default
 func NewWriter(filename string, wrappers ...OptionWrapper) (FileLogWriter, error) {
 	f, err := filepath.Abs(filename)
 	if err != nil {
@@ -129,7 +121,6 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (FileLogWriter, error
 	return fw, nil
 }
 
-// Close 关闭文件
 func (w *fWriter) Close() error {
 	if w.file != nil {
 		return w.file.Close()

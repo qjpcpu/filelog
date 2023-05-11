@@ -1,5 +1,10 @@
+# Features
 
-# example
+* auto rotate by daily,hourly,minutely,none
+* keep max KeepCount log files
+* auto recreate log file when unexpected deletion
+
+# Example
 
 ```
 package main
@@ -18,7 +23,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	w.Write([]byte("hillo"))
+	w.Write([]byte("hello log"))
 	w.Close()
 }
 ```

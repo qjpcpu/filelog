@@ -2,9 +2,13 @@ package filelog
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -46,6 +50,9 @@ type fWriter struct {
 	nonLinuxWatch int32
 	truncateFlag  int32
 	keepCount     int
+	maxKeepSize   int64
+	checkSizeCh   chan struct{}
+	closeOnce     sync.Once
 }
 
 type RotateType int
@@ -58,12 +65,19 @@ const (
 	RotateNone
 )
 
+const (
+	K = 1024
+	M = 1024 * 1024
+	G = 1024 * 1024 * 1024
+)
+
 type Option struct {
 	RotateType     RotateType
 	CreateShortcut bool
 	BufferSize     uint64
 	FlushInterval  time.Duration
 	KeepCount      int
+	MaxSize        int64
 }
 
 type OptionWrapper func(*Option)
@@ -83,6 +97,12 @@ func CreateShortcut(yes bool) OptionWrapper {
 func Keep(count int) OptionWrapper {
 	return func(o *Option) {
 		o.KeepCount = count
+	}
+}
+
+func KeepMaxSize(size int64) OptionWrapper {
+	return func(o *Option) {
+		o.MaxSize = size
 	}
 }
 
@@ -110,6 +130,8 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (FileLogWriter, error
 		createShortcut: opt.CreateShortcut,
 		reOpen:         1,
 		keepCount:      opt.KeepCount,
+		maxKeepSize:    opt.MaxSize,
+		checkSizeCh:    make(chan struct{}, 1),
 	}
 	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)
@@ -118,14 +140,18 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (FileLogWriter, error
 		Writer:  &wr,
 		fwriter: w,
 	}
+	go fw.fwriter.secureDiskPressure()
 	return fw, nil
 }
 
-func (w *fWriter) Close() error {
-	if w.file != nil {
-		return w.file.Close()
-	}
-	return nil
+func (w *fWriter) Close() (err error) {
+	w.closeOnce.Do(func() {
+		if w.file != nil {
+			err = w.file.Close()
+		}
+		close(w.checkSizeCh)
+	})
+	return
 }
 
 func (opt *Option) validate() error {
@@ -241,4 +267,53 @@ func (w *fWriter) Write(p []byte) (int, error) {
 		fmt.Fprintf(os.Stderr, "fWriter(%q): %s\n", w.filename, err)
 	}
 	return n, err
+}
+
+func (w *fWriter) secureDiskPressure() {
+	if w.maxKeepSize <= 0 {
+		return
+	}
+	ticker := time.NewTicker(time.Hour * 1)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			w.removeLargeLogs()
+		case <-w.checkSizeCh:
+			return
+		}
+	}
+}
+
+func (w *fWriter) removeLargeLogs() {
+	dir := filepath.Dir(w.realFilename)
+	base := filepath.Base(w.filename)
+	fileInfos, err := ioutil.ReadDir(dir)
+	if err != nil {
+		log.Printf("[filelog] read dir %s file %v\n", dir, err)
+		return
+	}
+	var files []string
+	for _, fi := range fileInfos {
+		if strings.HasPrefix(fi.Name(), base+".") {
+			files = append(files, filepath.Join(dir, fi.Name()))
+		}
+	}
+	sort.SliceStable(files, func(i, j int) bool {
+		return files[i] > files[j]
+	})
+	var acc int64
+	for i, file := range files {
+		if fi, err := os.Stat(file); err == nil {
+			acc += fi.Size()
+		}
+		if i == 0 {
+			continue
+		}
+		if acc > w.maxKeepSize {
+			os.Truncate(file, 0)
+			os.RemoveAll(file)
+			log.Printf("[filelog] accumulate size %v > %v, truncate file %v\n", acc, w.maxKeepSize, file)
+		}
+	}
 }

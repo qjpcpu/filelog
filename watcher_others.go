@@ -1,3 +1,4 @@
+//go:build darwin || windows
 // +build darwin windows
 
 // just for compile pass
@@ -10,15 +11,19 @@ import (
 	"time"
 )
 
-func (w *fWriter) watchFile(filename string) {
+func (w *fWriter) watchFile() {
 	atomic.CompareAndSwapInt32(&w.reOpen, 1, 0)
 	if atomic.CompareAndSwapInt32(&w.nonLinuxWatch, 0, 1) {
 		ticker := time.NewTicker(3 * time.Second)
 		go func() {
 			for {
-				<-ticker.C
-				if _, err := os.Stat(filename); os.IsNotExist(err) {
-					atomic.CompareAndSwapInt32(&w.reOpen, 0, 1)
+				select {
+				case <-ticker.C:
+					if _, err := os.Stat(w.realFilename); os.IsNotExist(err) {
+						atomic.CompareAndSwapInt32(&w.reOpen, 0, 1)
+					}
+				case w.closeCh:
+					return
 				}
 			}
 		}()

@@ -51,8 +51,10 @@ type fWriter struct {
 	truncateFlag  int32
 	keepCount     int
 	maxKeepSize   int64
-	checkSizeCh   chan struct{}
+	closeCh       chan struct{}
 	closeOnce     sync.Once
+	watchOnce     sync.Once
+	disableWatch  bool
 }
 
 type RotateType int
@@ -78,6 +80,7 @@ type Option struct {
 	FlushInterval  time.Duration
 	KeepCount      int
 	MaxSize        int64
+	DisableWatch   bool
 }
 
 type OptionWrapper func(*Option)
@@ -91,6 +94,12 @@ func RotateBy(t RotateType) OptionWrapper {
 func CreateShortcut(yes bool) OptionWrapper {
 	return func(o *Option) {
 		o.CreateShortcut = yes
+	}
+}
+
+func DisableWatchFile() OptionWrapper {
+	return func(o *Option) {
+		o.DisableWatch = true
 	}
 }
 
@@ -131,7 +140,8 @@ func NewWriter(filename string, wrappers ...OptionWrapper) (FileLogWriter, error
 		reOpen:         1,
 		keepCount:      opt.KeepCount,
 		maxKeepSize:    opt.MaxSize,
-		checkSizeCh:    make(chan struct{}, 1),
+		closeCh:        make(chan struct{}, 1),
+		disableWatch:   opt.DisableWatch,
 	}
 	wr := diode.NewWriter(w, int(opt.BufferSize), opt.FlushInterval, func(dropped int) {
 		log.Printf("[filelog] %d logs dropped\n", dropped)
@@ -149,7 +159,7 @@ func (w *fWriter) Close() (err error) {
 		if w.file != nil {
 			err = w.file.Close()
 		}
-		close(w.checkSizeCh)
+		close(w.closeCh)
 	})
 	return
 }
@@ -189,10 +199,6 @@ func is2n(num uint64) bool {
 	return num > 0 && num&(num-1) == 0
 }
 
-func (w *fWriter) needWatcher() bool {
-	return w.rt == RotateNone
-}
-
 func (w *fileLogWriter) Filename() string { return w.fwriter.realFilename }
 
 func (w *fWriter) openFile() error {
@@ -202,6 +208,7 @@ func (w *fWriter) openFile() error {
 	if err != nil {
 		return err
 	}
+	atomic.StoreInt32(&w.reOpen, 0)
 	w.file = fd
 	if w.createShortcut && w.rt != RotateNone {
 		linkto, _ := os.Readlink(w.filename)
@@ -210,8 +217,10 @@ func (w *fWriter) openFile() error {
 			os.Symlink(filepath.Base(w.realFilename), w.filename)
 		}
 	}
-	if w.needWatcher() {
-		w.watchFile(w.realFilename)
+	if !w.disableWatch {
+		w.watchOnce.Do(func() {
+			w.watchFile()
+		})
 	}
 	return nil
 }
@@ -237,6 +246,7 @@ func (w *fWriter) doRotate() error {
 	fd := w.file
 	if fd != nil {
 		fd.Close()
+		w.file = nil
 	}
 	// Open the log file
 	return w.openFile()
@@ -279,7 +289,7 @@ func (w *fWriter) secureDiskPressure() {
 		select {
 		case <-ticker.C:
 			w.removeLargeLogs()
-		case <-w.checkSizeCh:
+		case <-w.closeCh:
 			return
 		}
 	}

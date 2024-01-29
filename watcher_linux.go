@@ -1,46 +1,42 @@
+//go:build linux
 // +build linux
 
 package filelog
 
 import (
-	"github.com/dersebi/golang_exp/exp/inotify"
+	"fmt"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"syscall"
+
+	"github.com/dersebi/golang_exp/exp/inotify"
 )
 
-func (w *fWriter) watchFile(filename string) {
-	for doOnce := true; doOnce; doOnce = false {
-		if !atomic.CompareAndSwapInt32(&w.reOpen, 1, 0) {
-			break
-		}
-		wa, err := inotify.NewWatcher()
-		if err != nil {
-			break
-		}
-		if err = wa.AddWatch(filename, syscall.IN_DELETE|syscall.IN_DELETE_SELF|syscall.IN_MOVE|syscall.IN_MOVE_SELF|syscall.IN_IGNORED); err != nil {
-			break
-		}
-		wa.AddWatch(filepath.Dir(filename), syscall.IN_DELETE)
-		go func(iw *inotify.Watcher) {
-		LOOP:
-			for {
-				select {
-				case ev := <-iw.Event:
-					if ev.Mask == syscall.IN_DELETE {
-						abs, _ := filepath.Abs(ev.Name)
-						if abs == filename {
-							break LOOP
-						}
-					} else {
-						break LOOP
-					}
-				case <-iw.Error:
-					break LOOP
-				}
-			}
-			atomic.StoreInt32(&w.reOpen, 1)
-			iw.Close()
-		}(wa)
+func (w *fWriter) watchFile() {
+	wa, err := inotify.NewWatcher()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "watch %v fail %v\n", w.filename, err)
+		return
 	}
+	wa.AddWatch(filepath.Dir(w.filename), syscall.IN_DELETE)
+	go func(iw *inotify.Watcher) {
+		defer iw.Close()
+		for {
+			select {
+			case ev := <-iw.Event:
+				if ev.Mask == syscall.IN_DELETE {
+					abs, _ := filepath.Abs(ev.Name)
+					if abs == w.realFilename || abs == w.filename {
+						atomic.StoreInt32(&w.reOpen, 1)
+					}
+				}
+			case err := <-iw.Error:
+				fmt.Fprintf(os.Stderr, "watch %v fail %v\n", w.filename, err)
+				return
+			case <-w.closeCh:
+				return
+			}
+		}
+	}(wa)
 }

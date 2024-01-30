@@ -22,7 +22,7 @@ func (w *fWriter) watchFile() {
 					if _, err := os.Stat(w.realFilename); os.IsNotExist(err) {
 						atomic.CompareAndSwapInt32(&w.reOpen, 0, 1)
 					}
-				case w.closeCh:
+				case <-w.closeCh:
 					return
 				}
 			}
